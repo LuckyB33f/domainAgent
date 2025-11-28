@@ -1,4 +1,6 @@
 using DomainAgent.Configuration;
+using DomainAgent.Data.Entities;
+using DomainAgent.Data.Repositories;
 using DomainAgent.Models;
 using Microsoft.Extensions.Options;
 
@@ -11,17 +13,23 @@ public class DomainPurchaseService : IDomainPurchaseService
 {
     private readonly ITppWholesaleApiClient _apiClient;
     private readonly IDomainSelectionService _selectionService;
+    private readonly IPurchaseRepository _purchaseRepository;
+    private readonly IDropListRepository _dropListRepository;
     private readonly DomainSelectionOptions _options;
     private readonly ILogger<DomainPurchaseService> _logger;
 
     public DomainPurchaseService(
         ITppWholesaleApiClient apiClient,
         IDomainSelectionService selectionService,
+        IPurchaseRepository purchaseRepository,
+        IDropListRepository dropListRepository,
         IOptions<DomainSelectionOptions> options,
         ILogger<DomainPurchaseService> logger)
     {
         _apiClient = apiClient;
         _selectionService = selectionService;
+        _purchaseRepository = purchaseRepository;
+        _dropListRepository = dropListRepository;
         _options = options.Value;
         _logger = logger;
     }
@@ -46,6 +54,9 @@ public class DomainPurchaseService : IDomainPurchaseService
 
             _logger.LogInformation("Retrieved {Count} domains from drop list", dropListResponse.Data.Count);
 
+            // Step 1.5: Save the drop list to database
+            await SaveDropListToDatabase(dropListResponse.Data, cancellationToken);
+
             // Step 2: Select domains to buy
             var selectedDomains = _selectionService.SelectDomainsToBuy(dropListResponse.Data);
 
@@ -57,7 +68,7 @@ public class DomainPurchaseService : IDomainPurchaseService
 
             _logger.LogInformation("Selected {Count} domains for purchase", selectedDomains.Count);
 
-            // Step 3: Execute purchases
+            // Step 3: Execute purchases and save to database
             foreach (var domain in selectedDomains)
             {
                 if (cancellationToken.IsCancellationRequested)
@@ -66,25 +77,54 @@ public class DomainPurchaseService : IDomainPurchaseService
                     break;
                 }
 
+                // Create pending purchase record
+                var purchase = new Purchase
+                {
+                    DomainName = domain.DomainName,
+                    Tld = domain.Tld,
+                    Status = PurchaseStatus.Pending,
+                    PurchaseDate = DateTime.UtcNow
+                };
+
                 try
                 {
+                    // Save pending purchase
+                    await _purchaseRepository.AddAsync(purchase, cancellationToken);
+                    await _purchaseRepository.SaveChangesAsync(cancellationToken);
+
                     var orderRequest = CreateOrderRequest(domain);
                     var orderResponse = await _apiClient.OrderDomainAsync(orderRequest, cancellationToken);
                     results.Add(orderResponse);
 
+                    // Update purchase status based on result
                     if (orderResponse.Success)
                     {
+                        purchase.Status = PurchaseStatus.Success;
+                        purchase.OrderId = orderResponse.OrderId;
                         _logger.LogInformation("Successfully ordered domain: {DomainName}", domain.DomainName);
                     }
                     else
                     {
+                        purchase.Status = PurchaseStatus.Failed;
+                        purchase.ErrorMessage = orderResponse.ErrorMessage;
                         _logger.LogWarning("Failed to order domain: {DomainName}. Error: {Error}",
                             domain.DomainName, orderResponse.ErrorMessage);
                     }
+
+                    // Save updated purchase status
+                    await _purchaseRepository.UpdateAsync(purchase, cancellationToken);
+                    await _purchaseRepository.SaveChangesAsync(cancellationToken);
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Error ordering domain: {DomainName}", domain.DomainName);
+
+                    // Update purchase as failed
+                    purchase.Status = PurchaseStatus.Failed;
+                    purchase.ErrorMessage = ex.Message;
+                    await _purchaseRepository.UpdateAsync(purchase, cancellationToken);
+                    await _purchaseRepository.SaveChangesAsync(cancellationToken);
+
                     results.Add(new DomainOrderResponse
                     {
                         Success = false,
@@ -106,6 +146,39 @@ public class DomainPurchaseService : IDomainPurchaseService
         }
 
         return results;
+    }
+
+    private async Task SaveDropListToDatabase(List<DropListDomain> dropList, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Saving {Count} drop list entries to database", dropList.Count);
+
+        var entriesToAdd = new List<DropListEntry>();
+
+        foreach (var domain in dropList)
+        {
+            // Skip duplicates
+            if (!await _dropListRepository.ExistsAsync(domain.DomainName, cancellationToken))
+            {
+                entriesToAdd.Add(new DropListEntry
+                {
+                    DomainName = domain.DomainName,
+                    DropDate = domain.DropDate,
+                    Tld = domain.Tld,
+                    Source = "API"
+                });
+            }
+        }
+
+        if (entriesToAdd.Count > 0)
+        {
+            await _dropListRepository.AddRangeAsync(entriesToAdd, cancellationToken);
+            await _dropListRepository.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation("Saved {Count} new drop list entries to database", entriesToAdd.Count);
+        }
+        else
+        {
+            _logger.LogInformation("No new drop list entries to save");
+        }
     }
 
     private DomainOrderRequest CreateOrderRequest(DropListDomain domain)
