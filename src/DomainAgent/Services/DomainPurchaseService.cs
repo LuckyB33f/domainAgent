@@ -156,12 +156,13 @@ public class DomainPurchaseService : IDomainPurchaseService
 
         foreach (var domain in dropList)
         {
+            var normalizedDomainName = domain.DomainName.ToLowerInvariant();
             // Skip duplicates
-            if (!await _dropListRepository.ExistsAsync(domain.DomainName, cancellationToken))
+            if (!await _dropListRepository.ExistsAsync(normalizedDomainName, cancellationToken))
             {
                 entriesToAdd.Add(new DropListEntry
                 {
-                    DomainName = domain.DomainName,
+                    DomainName = normalizedDomainName,
                     DropDate = domain.DropDate,
                     Tld = domain.Tld,
                     Source = "API"

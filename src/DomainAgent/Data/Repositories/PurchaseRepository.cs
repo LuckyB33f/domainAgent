@@ -24,11 +24,11 @@ public class PurchaseRepository : IPurchaseRepository
     }
 
     /// <inheritdoc />
-    public async Task UpdateAsync(Purchase purchase, CancellationToken cancellationToken = default)
+    public Task UpdateAsync(Purchase purchase, CancellationToken cancellationToken = default)
     {
         purchase.UpdatedAt = DateTime.UtcNow;
         _context.Purchases.Update(purchase);
-        await Task.CompletedTask;
+        return Task.CompletedTask;
     }
 
     /// <inheritdoc />
