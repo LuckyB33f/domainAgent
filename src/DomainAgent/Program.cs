@@ -1,15 +1,39 @@
 using DomainAgent.Configuration;
 using DomainAgent.Jobs;
 using DomainAgent.Services;
+using Microsoft.Extensions.Options;
 using Quartz;
 
 var builder = Host.CreateApplicationBuilder(args);
 
-// Configure options
-builder.Services.Configure<TppWholesaleOptions>(
-    builder.Configuration.GetSection(TppWholesaleOptions.SectionName));
-builder.Services.Configure<DomainSelectionOptions>(
-    builder.Configuration.GetSection(DomainSelectionOptions.SectionName));
+// Configure options with validation
+builder.Services.AddOptions<TppWholesaleOptions>()
+    .Bind(builder.Configuration.GetSection(TppWholesaleOptions.SectionName))
+    .Validate(options =>
+    {
+        if (string.IsNullOrWhiteSpace(options.ApiKey))
+        {
+            return false;
+        }
+        if (string.IsNullOrWhiteSpace(options.BaseUrl))
+        {
+            return false;
+        }
+        return true;
+    }, "TppWholesale:ApiKey and TppWholesale:BaseUrl are required.")
+    .ValidateOnStart();
+
+builder.Services.AddOptions<DomainSelectionOptions>()
+    .Bind(builder.Configuration.GetSection(DomainSelectionOptions.SectionName))
+    .Validate(options =>
+    {
+        if (string.IsNullOrWhiteSpace(options.DefaultRegistrantContactId))
+        {
+            return false;
+        }
+        return true;
+    }, "DomainSelection:DefaultRegistrantContactId is required for domain registration.")
+    .ValidateOnStart();
 
 // Register HTTP client for TPP Wholesale API
 builder.Services.AddHttpClient<ITppWholesaleApiClient, TppWholesaleApiClient>(client =>

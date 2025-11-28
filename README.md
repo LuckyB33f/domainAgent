@@ -18,7 +18,12 @@ This application runs as a background service and executes a domain purchase wor
 
 ## Configuration
 
-Configure the application using `appsettings.json` or environment variables:
+Configure the application using `appsettings.json` or environment variables.
+
+**Required configuration values (validated at startup):**
+- `TppWholesale:ApiKey` - Your TPP Wholesale API key
+- `TppWholesale:BaseUrl` - The API base URL
+- `DomainSelection:DefaultRegistrantContactId` - Contact ID for domain registration
 
 ### TPP Wholesale API Settings
 

@@ -39,6 +39,11 @@ public class TppWholesaleApiClient : ITppWholesaleApiClient
             _httpClient.DefaultRequestHeaders.Add("X-Api-Key", _options.ApiKey);
         }
 
+        if (!string.IsNullOrEmpty(_options.ApiSecret))
+        {
+            _httpClient.DefaultRequestHeaders.Add("X-Api-Secret", _options.ApiSecret);
+        }
+
         if (!string.IsNullOrEmpty(_options.ResellerId))
         {
             _httpClient.DefaultRequestHeaders.Add("X-Reseller-Id", _options.ResellerId);
@@ -183,8 +188,7 @@ public class TppWholesaleApiClient : ITppWholesaleApiClient
             }
 
             var result = await response.Content.ReadFromJsonAsync<Dictionary<string, object>>(cancellationToken);
-            var isAvailable = result?.TryGetValue("available", out var available) == true &&
-                              (available is bool b && b || available?.ToString()?.Equals("true", StringComparison.OrdinalIgnoreCase) == true);
+            var isAvailable = ParseAvailabilityResponse(result);
 
             _logger.LogDebug("Domain {DomainName} availability: {IsAvailable}", domainName, isAvailable);
 
@@ -195,5 +199,21 @@ public class TppWholesaleApiClient : ITppWholesaleApiClient
             _logger.LogError(ex, "Error checking availability for domain {DomainName}", domainName);
             return false;
         }
+    }
+
+    private static bool ParseAvailabilityResponse(Dictionary<string, object>? result)
+    {
+        if (result == null || !result.TryGetValue("available", out var availableValue))
+        {
+            return false;
+        }
+
+        if (availableValue is bool boolValue)
+        {
+            return boolValue;
+        }
+
+        var stringValue = availableValue?.ToString();
+        return stringValue?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
     }
 }
