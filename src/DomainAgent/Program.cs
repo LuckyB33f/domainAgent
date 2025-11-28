@@ -1,6 +1,9 @@
 using DomainAgent.Configuration;
+using DomainAgent.Data;
+using DomainAgent.Data.Repositories;
 using DomainAgent.Jobs;
 using DomainAgent.Services;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Quartz;
 
@@ -35,6 +38,25 @@ builder.Services.AddOptions<DomainSelectionOptions>()
     }, "DomainSelection:DefaultRegistrantContactId is required for domain registration.")
     .ValidateOnStart();
 
+builder.Services.AddOptions<DatabaseOptions>()
+    .Bind(builder.Configuration.GetSection(DatabaseOptions.SectionName))
+    .Validate(options =>
+    {
+        if (string.IsNullOrWhiteSpace(options.ConnectionString))
+        {
+            return false;
+        }
+        return true;
+    }, "Database:ConnectionString is required for database access.")
+    .ValidateOnStart();
+
+// Configure MySQL database
+var connectionString = builder.Configuration.GetSection(DatabaseOptions.SectionName)["ConnectionString"]
+    ?? throw new InvalidOperationException("Database connection string not configured");
+
+builder.Services.AddDbContext<DomainAgentDbContext>(options =>
+    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
+
 // Register HTTP client for TPP Wholesale API
 builder.Services.AddHttpClient<ITppWholesaleApiClient, TppWholesaleApiClient>(client =>
 {
@@ -44,9 +66,14 @@ builder.Services.AddHttpClient<ITppWholesaleApiClient, TppWholesaleApiClient>(cl
     client.Timeout = TimeSpan.FromSeconds(30);
 });
 
+// Register repositories
+builder.Services.AddScoped<IDropListRepository, DropListRepository>();
+builder.Services.AddScoped<IPurchaseRepository, PurchaseRepository>();
+
 // Register services
 builder.Services.AddScoped<IDomainSelectionService, DomainSelectionService>();
 builder.Services.AddScoped<IDomainPurchaseService, DomainPurchaseService>();
+builder.Services.AddScoped<ICsvIngestionService, CsvIngestionService>();
 
 // Configure Quartz
 builder.Services.AddQuartz(q =>
@@ -73,4 +100,12 @@ builder.Services.AddQuartz(q =>
 builder.Services.AddQuartzHostedService(q => q.WaitForJobsToComplete = true);
 
 var host = builder.Build();
+
+// Ensure database is created and migrations applied
+using (var scope = host.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<DomainAgentDbContext>();
+    await dbContext.Database.EnsureCreatedAsync();
+}
+
 host.Run();
